@@ -1,0 +1,1259 @@
+// Sanyog platform – PostgreSQL schema (Prisma).
+// Conventions:
+//  * Every row has createdAt; mutable rows have updatedAt.
+//  * "Actor" columns (reviewedById, createdById ...) are plain String ids on purpose:
+//    audit history must survive even if a user account is later anonymised.
+//  * Verification state lives on each evidence row (denormalised for fast reads) and the full
+//    decision history lives in VerificationRequest / VerificationReview.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ───────────────────────────── Enums ─────────────────────────────
+
+enum Role {
+  STUDENT
+  COLLEGE_AUTHORITY
+  INDUSTRY
+  ALUMNI
+  ADMIN
+}
+
+enum AccountStatus {
+  PENDING_EMAIL
+  PENDING_APPROVAL
+  ACTIVE
+  SUSPENDED
+  DELETED
+}
+
+enum AdminPermission {
+  MANAGE_USERS
+  VERIFY_INSTITUTIONS
+  VERIFY_ORGANIZATIONS
+  VIEW_AUDIT
+  MANAGE_TAXONOMY
+  MANAGE_RESOURCES
+  MANAGE_CONFIG
+  VIEW_AI_USAGE
+  MODERATE_CONTENT
+  VIEW_ANALYTICS
+  VIEW_SYSTEM_HEALTH
+}
+
+enum InstitutionStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+  SUSPENDED
+}
+
+enum OrganizationStatus {
+  PENDING
+  VERIFIED
+  REJECTED
+  SUSPENDED
+}
+
+enum VerificationStatus {
+  DRAFT
+  SUBMITTED
+  UNDER_REVIEW
+  CHANGES_REQUESTED
+  VERIFIED
+  REJECTED
+  EXPIRED
+  REVOKED
+}
+
+enum VerificationSubject {
+  IDENTITY
+  ENROLLMENT
+  ACADEMIC_RECORD
+  SKILL
+  PROJECT
+  CERTIFICATION
+  ALUMNI_GRADUATION
+}
+
+enum DocumentKind {
+  PHOTO
+  RESUME
+  ID_PROOF
+  MARKSHEET
+  CERTIFICATE
+  PROJECT_EVIDENCE
+  AGREEMENT
+  ORGANIZATION_PROOF
+  OTHER
+}
+
+enum PartnershipStatus {
+  REQUESTED
+  UNDER_REVIEW
+  CHANGES_REQUESTED
+  ACTIVE
+  REJECTED
+  EXPIRED
+  TERMINATED
+}
+
+enum AgreementStatus {
+  SUBMITTED
+  CHANGES_REQUESTED
+  APPROVED
+  REJECTED
+  SUPERSEDED
+}
+
+enum OpportunityType {
+  JOB
+  INTERNSHIP
+  APPRENTICESHIP
+  GRADUATE_TRAINEE
+  INDUSTRY_PROJECT
+  SPONSORED_TRAINING
+  COURSE
+  RESEARCH
+  MENTORSHIP
+}
+
+enum WorkMode {
+  ONSITE
+  REMOTE
+  HYBRID
+}
+
+enum OpportunityStatus {
+  DRAFT
+  PUBLISHED
+  CLOSED
+  CANCELLED
+}
+
+enum EligibilityResult {
+  ELIGIBLE
+  REQUIRES_REVIEW
+  NOT_ELIGIBLE
+}
+
+enum ApplicationStatus {
+  SUBMITTED
+  SHORTLISTED
+  INTERVIEW_SCHEDULED
+  SELECTED
+  OFFER_MADE
+  OFFER_ACCEPTED
+  OFFER_DECLINED
+  REJECTED
+  WITHDRAWN
+}
+
+enum InterviewStatus {
+  SCHEDULED
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+}
+
+enum OfferStatus {
+  ISSUED
+  ACCEPTED
+  DECLINED
+  EXPIRED
+  WITHDRAWN
+}
+
+enum ReferralStatus {
+  PENDING_STUDENT_CONSENT
+  SUBMITTED
+  ACCEPTED_BY_RECRUITER
+  SHORTLISTED
+  HIRED
+  NOT_SELECTED
+  WITHDRAWN
+  DECLINED_BY_STUDENT
+}
+
+enum ConsentScope {
+  RECRUITER_PROFILE_VIEW
+  REFERRAL_SHARING
+  ALUMNI_DISCOVERY
+  SKILL_PASSPORT_SHARING
+}
+
+enum RoadmapSource {
+  AI_PROVIDER
+  RULE_BASED_FALLBACK
+}
+
+enum RoadmapStatus {
+  ACTIVE
+  ARCHIVED
+}
+
+enum MilestoneLevel {
+  BEGINNER
+  INTERMEDIATE
+  ADVANCED
+}
+
+enum MilestoneStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+}
+
+enum ResourceType {
+  BOOK
+  OPEN_TEXTBOOK
+  RESEARCH_PAPER
+  COURSE
+  DOCUMENTATION
+  TUTORIAL
+  PRACTICE
+  PROJECT_IDEA
+  CERTIFICATION_PREP
+}
+
+enum ResourceStatus {
+  PENDING_REVIEW
+  ACTIVE
+  BROKEN_LINK
+  REMOVED
+}
+
+enum NotificationType {
+  VERIFICATION
+  APPLICATION
+  INTERVIEW
+  OFFER
+  REFERRAL
+  PARTNERSHIP
+  OPPORTUNITY_ALERT
+  PLACEMENT_SUPPORT
+  ACCOUNT
+  SYSTEM
+}
+
+enum PlacementRequestType {
+  INTERVIEW_PREPARATION
+  RESUME_REVIEW
+  MOCK_INTERVIEW
+  OFFER_GUIDANCE
+  DOCUMENT_CHECKLIST
+  ONBOARDING_PREPARATION
+}
+
+enum PlacementRequestStatus {
+  OPEN
+  ASSIGNED
+  SCHEDULED
+  RESOLVED
+  CLOSED
+}
+
+enum SessionKind {
+  MENTORSHIP
+  CAREER_SESSION
+  WORKSHOP
+}
+
+enum EmailTokenPurpose {
+  VERIFY_EMAIL
+  RESET_PASSWORD
+}
+
+enum PrivacyRequestType {
+  DATA_EXPORT
+  ACCOUNT_DELETION
+}
+
+enum PrivacyRequestStatus {
+  REQUESTED
+  IN_PROGRESS
+  COMPLETED
+  REJECTED
+}
+
+enum AuditSeverity {
+  INFO
+  WARNING
+  SECURITY
+}
+
+// ───────────────────────────── Identity & access ─────────────────────────────
+
+model User {
+  id               String        @id @default(cuid())
+  email            String        @unique
+  passwordHash     String
+  role             Role
+  status           AccountStatus @default(PENDING_EMAIL)
+  fullName         String
+  phone            String?
+  emailVerifiedAt  DateTime?
+  failedLoginCount Int           @default(0)
+  lockedUntil      DateTime?
+  lastLoginAt      DateTime?
+  // TRUE for seeded privileged demo accounts: every API except change-password is blocked until changed
+  mustChangePassword Boolean     @default(false)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  sessions           Session[]
+  emailTokens        EmailToken[]
+  adminGrants        AdminGrant[]
+  institutionMember  InstitutionMembership[]
+  organizationMember OrganizationMember[]
+  studentProfile     StudentProfile?
+  alumniProfile      AlumniProfile?
+  notifications      Notification[]
+  documents          Document[]
+  reviews            VerificationReview[]
+  privacyRequests    PrivacyRequest[]
+  placementMessages  PlacementMessage[]
+
+  @@index([role, status])
+}
+
+model Session {
+  id         String   @id @default(cuid())
+  userId     String
+  tokenHash  String   @unique // SHA-256 of the cookie value; raw token is never stored
+  csrfToken  String
+  ip         String?
+  userAgent  String?
+  createdAt  DateTime @default(now())
+  lastSeenAt DateTime @default(now())
+  expiresAt  DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+}
+
+model EmailToken {
+  id        String            @id @default(cuid())
+  userId    String
+  purpose   EmailTokenPurpose
+  tokenHash String            @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime          @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, purpose])
+}
+
+model AdminGrant {
+  id         String          @id @default(cuid())
+  userId     String
+  permission AdminPermission
+  grantedBy  String?
+  createdAt  DateTime        @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, permission])
+}
+
+model PlatformSetting {
+  key         String   @id
+  value       Json
+  updatedById String?
+  updatedAt   DateTime @updatedAt
+}
+
+// ───────────────────────────── Institutions ─────────────────────────────
+
+model Institution {
+  id              String            @id @default(cuid())
+  name            String
+  institutionCode String?           @unique // official identifier, entered by the college
+  universityName  String?
+  type            String? // Engineering college, University, Polytechnic ...
+  state           String?
+  city            String?
+  website         String?
+  status          InstitutionStatus @default(PENDING)
+  verifiedAt      DateTime?
+  verifiedById    String?
+  // Configurable per institution. Example:
+  // { "requiredStudentFields": ["registrationNumber"] }
+  registrationRules Json            @default("{}")
+  // Example: { "terms": [{ "name": "Odd", "start": "07-01", "end": "12-15" }] }
+  academicCalendar  Json            @default("{}")
+  // Example: { "maxBacklogsForPlacement": 0, "minCgpaForPlacement": 6.0 }
+  eligibilityRules  Json            @default("{}")
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
+
+  departments          Department[]
+  memberships          InstitutionMembership[]
+  students             StudentProfile[]
+  alumni               AlumniProfile[]
+  partnerships         Partnership[]
+  verificationRequests VerificationRequest[]
+  placementRequests    PlacementRequest[]
+  opportunityTargets   OpportunityInstitution[]
+  opportunitiesPosted  Opportunity[]
+
+  @@index([status])
+}
+
+model Department {
+  id            String @id @default(cuid())
+  institutionId String
+  name          String
+  code          String?
+  // Maps to the discipline keys used by the skill taxonomy and roadmap templates (cse, ece, mech ...)
+  discipline    String
+
+  institution Institution      @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  students    StudentProfile[]
+  alumni      AlumniProfile[]
+
+  @@unique([institutionId, name])
+}
+
+model InstitutionMembership {
+  id                    String   @id @default(cuid())
+  userId                String
+  institutionId         String
+  title                 String?
+  canVerifyCredentials  Boolean  @default(true)
+  canManagePartnerships Boolean  @default(false)
+  isPlacementOfficer    Boolean  @default(false)
+  // NULL = pending approval (by platform admin or an approved member of the same institution)
+  approvedAt            DateTime?
+  createdAt             DateTime @default(now())
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  institution Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, institutionId])
+  @@index([institutionId])
+}
+
+// ───────────────────────────── Student profile ─────────────────────────────
+
+model StudentProfile {
+  id                     String             @id @default(cuid())
+  userId                 String             @unique
+  institutionId          String
+  departmentId           String?
+  studentIdNumber        String?
+  registrationNumber     String?
+  enrollmentNumber       String?
+  degree                 String
+  academicYear           Int
+  semester               Int
+  graduationYear         Int
+  bio                    String?
+  careerInterests        String[]
+  targetRole             String?
+  weeklyLearningHours    Int?
+  experienceMonths       Int                @default(0)
+  // Student registration approval by the college (separate from credential verification)
+  registrationStatus     VerificationStatus @default(SUBMITTED)
+  registrationReviewedAt DateTime?
+  profileCompletion      Int                @default(0)
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  institution Institution @relation(fields: [institutionId], references: [id])
+  department  Department? @relation(fields: [departmentId], references: [id])
+
+  academicRecords      AcademicRecord[]
+  skills               StudentSkill[]
+  projects             Project[]
+  certifications       Certification[]
+  verificationRequests VerificationRequest[]
+  applications         Application[]
+  referrals            Referral[]
+  consents             ConsentGrant[]
+  roadmaps             Roadmap[]
+  resourceProgress     ResourceProgress[]
+  placementRequests    PlacementRequest[]
+  credentialTokens     CredentialToken[]
+  sessionEnrollments   SessionEnrollment[]
+  savedOpportunities   SavedOpportunity[]
+
+  @@unique([institutionId, registrationNumber])
+  @@unique([institutionId, enrollmentNumber])
+  @@unique([institutionId, studentIdNumber])
+  @@index([institutionId, registrationStatus])
+  @@index([departmentId])
+}
+
+model AcademicRecord {
+  id                 String             @id @default(cuid())
+  studentId          String
+  semester           Int
+  cgpa               Decimal?           @db.Decimal(4, 2)
+  percentage         Decimal?           @db.Decimal(5, 2)
+  activeBacklogs     Int                @default(0)
+  verificationStatus VerificationStatus @default(DRAFT)
+  verifiedAt         DateTime?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  student StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@unique([studentId, semester])
+}
+
+// ───────────────────────────── Skill taxonomy ─────────────────────────────
+
+model SkillTaxonomy {
+  id         String   @id @default(cuid())
+  name       String
+  version    String
+  // TRUE only for data imported from an official, citable source. Demo data must be FALSE.
+  isOfficial Boolean  @default(false)
+  sourceUrl  String?
+  notes      String?
+  createdAt  DateTime @default(now())
+
+  skills Skill[]
+
+  @@unique([name, version])
+}
+
+model Skill {
+  id           String   @id @default(cuid())
+  taxonomyId   String
+  name         String
+  category     String
+  disciplines  String[]
+  nsqfLevel    Int? // Only set when taken from an official NSQF source
+  externalCode String?
+  createdAt    DateTime @default(now())
+
+  taxonomy      SkillTaxonomy            @relation(fields: [taxonomyId], references: [id], onDelete: Cascade)
+  studentSkills StudentSkill[]
+  requirements  OpportunityRequirement[]
+  projects      Project[]
+  resources     LearningResource[]
+
+  @@unique([taxonomyId, name])
+  @@index([category])
+}
+
+model StudentSkill {
+  id                 String             @id @default(cuid())
+  studentId          String
+  skillId            String
+  proficiency        Int // 1 (basic) .. 5 (expert)
+  acquiredOn         DateTime?
+  verificationStatus VerificationStatus @default(DRAFT)
+  verifiedAt         DateTime?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  student StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  skill   Skill          @relation(fields: [skillId], references: [id])
+
+  @@unique([studentId, skillId])
+  @@index([skillId])
+}
+
+model Project {
+  id                 String             @id @default(cuid())
+  studentId          String
+  title              String
+  description        String
+  projectUrl         String?
+  repositoryUrl      String?
+  startedOn          DateTime?
+  endedOn            DateTime?
+  verificationStatus VerificationStatus @default(DRAFT)
+  verifiedAt         DateTime?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  student StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  skills  Skill[]
+
+  @@index([studentId])
+}
+
+model Certification {
+  id                 String             @id @default(cuid())
+  studentId          String
+  name               String
+  issuer             String
+  credentialId       String?
+  credentialUrl      String?
+  issuedOn           DateTime?
+  expiresOn          DateTime?
+  verificationStatus VerificationStatus @default(DRAFT)
+  verifiedAt         DateTime?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  student StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId])
+}
+
+// ───────────────────────────── Documents & verification ─────────────────────────────
+
+model Document {
+  id            String       @id @default(cuid())
+  ownerId       String
+  kind          DocumentKind
+  originalName  String
+  mimeType      String
+  sizeBytes     Int
+  storageKey    String       @unique // path inside the PRIVATE upload directory, never a public URL
+  sha256        String
+  // If set, reviewers of this institution may read the file (for verification evidence).
+  institutionId String?
+  createdAt     DateTime     @default(now())
+  deletedAt     DateTime?
+
+  owner      User                   @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  evidence   VerificationEvidence[]
+  agreements Agreement[]
+
+  @@index([ownerId, kind])
+}
+
+model VerificationRequest {
+  id                 String              @id @default(cuid())
+  institutionId      String
+  studentId          String?
+  alumniId           String?
+  subjectType        VerificationSubject
+  subjectId          String // id of the AcademicRecord / StudentSkill / Project / ... being verified
+  status             VerificationStatus  @default(SUBMITTED)
+  // Increments when a material change forces re-verification
+  revision           Int                 @default(1)
+  assignedReviewerId String?
+  decisionReason     String?
+  submittedAt        DateTime            @default(now())
+  decidedAt          DateTime?
+  expiresAt          DateTime?
+  updatedAt          DateTime            @updatedAt
+
+  institution Institution            @relation(fields: [institutionId], references: [id])
+  student     StudentProfile?        @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  reviews     VerificationReview[]
+  evidence    VerificationEvidence[]
+
+  @@index([institutionId, status])
+  @@index([subjectType, subjectId])
+}
+
+model VerificationReview {
+  id         String             @id @default(cuid())
+  requestId  String
+  reviewerId String
+  fromStatus VerificationStatus
+  toStatus   VerificationStatus
+  reason     String?
+  createdAt  DateTime           @default(now())
+
+  request  VerificationRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  reviewer User                @relation(fields: [reviewerId], references: [id])
+
+  @@index([requestId])
+}
+
+model VerificationEvidence {
+  requestId  String
+  documentId String
+
+  request  VerificationRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  document Document            @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@id([requestId, documentId])
+}
+
+model CredentialToken {
+  id        String    @id @default(cuid())
+  studentId String
+  jti       String    @unique // public token id used for lookups / revocation checks
+  // Minimal, non-sensitive claims (institution name, "degree verified", validity). Never contact data.
+  claims    Json
+  signature String // HMAC over the claims using a server-held key
+  issuedAt  DateTime  @default(now())
+  expiresAt DateTime
+  revokedAt DateTime?
+  revokedReason String?
+
+  student StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId])
+}
+
+// ───────────────────────────── Organizations & alumni ─────────────────────────────
+
+model Organization {
+  id                 String             @id @default(cuid())
+  legalName          String
+  displayName        String
+  registrationNumber String?            @unique
+  website            String?
+  industry           String?
+  sizeBand           String?
+  address            String?
+  repName            String
+  repDesignation     String
+  status             OrganizationStatus @default(PENDING)
+  verifiedAt         DateTime?
+  verifiedById       String?
+  verificationNote   String?
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  members       OrganizationMember[]
+  partnerships  Partnership[]
+  opportunities Opportunity[]
+
+  @@index([status])
+}
+
+model OrganizationMember {
+  id             String   @id @default(cuid())
+  userId         String
+  organizationId String
+  title          String?
+  isOwner        Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, organizationId])
+}
+
+model AlumniProfile {
+  id                    String             @id @default(cuid())
+  userId                String             @unique
+  institutionId         String
+  departmentId          String?
+  degree                String
+  graduationYear        Int
+  currentEmployer       String?
+  currentRole           String?
+  expertise             String[]
+  bio                   String?
+  linkedinUrl           String?
+  availableForMentoring Boolean            @default(false)
+  verificationStatus    VerificationStatus @default(SUBMITTED)
+  verifiedAt            DateTime?
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  institution Institution @relation(fields: [institutionId], references: [id])
+  department  Department? @relation(fields: [departmentId], references: [id])
+
+  employment EmploymentHistory[]
+  referrals  Referral[]
+  sessions   MentorshipSession[]
+
+  @@index([institutionId, verificationStatus])
+}
+
+model EmploymentHistory {
+  id        String @id @default(cuid())
+  alumniId  String
+  employer  String
+  jobTitle  String
+  startYear Int
+  endYear   Int?
+
+  alumni AlumniProfile @relation(fields: [alumniId], references: [id], onDelete: Cascade)
+}
+
+// ───────────────────────────── Partnerships ─────────────────────────────
+
+model Partnership {
+  id                    String            @id @default(cuid())
+  organizationId        String
+  institutionId         String
+  status                PartnershipStatus @default(REQUESTED)
+  requestedById         String
+  requestNote           String?
+  validFrom             DateTime?
+  validUntil            DateTime?
+  renewalReminderSentAt DateTime?
+  createdAt             DateTime          @default(now())
+  updatedAt             DateTime          @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  institution  Institution  @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+  agreements   Agreement[]
+
+  @@unique([organizationId, institutionId])
+  @@index([institutionId, status])
+  @@index([validUntil])
+}
+
+model Agreement {
+  id            String          @id @default(cuid())
+  partnershipId String
+  documentId    String
+  version       Int             @default(1)
+  status        AgreementStatus @default(SUBMITTED)
+  submittedById String
+  reviewedById  String?
+  reviewNote    String?
+  createdAt     DateTime        @default(now())
+  reviewedAt    DateTime?
+
+  partnership Partnership @relation(fields: [partnershipId], references: [id], onDelete: Cascade)
+  document    Document    @relation(fields: [documentId], references: [id])
+
+  @@unique([partnershipId, version])
+}
+
+// ───────────────────────────── Opportunities ─────────────────────────────
+
+model Opportunity {
+  id                    String            @id @default(cuid())
+  organizationId        String?
+  postedByInstitutionId String? // set when a college publishes a vacancy / course itself
+  createdById           String
+  type                  OpportunityType
+  title                 String
+  description           String
+  location              String?
+  workMode              WorkMode          @default(ONSITE)
+  compensationDisclosed Boolean           @default(false)
+  compensationMin       Int?
+  compensationMax       Int?
+  compensationPeriod    String? // e.g. "per month", "per annum"
+  openings              Int               @default(1)
+  deadline              DateTime
+  startDate             DateTime?
+  status                OpportunityStatus @default(DRAFT)
+  // Structured eligibility criteria – the eligibility engine reads ONLY these fields.
+  minCgpa                Decimal?         @db.Decimal(4, 2)
+  minPercentage          Decimal?         @db.Decimal(5, 2)
+  allowedDisciplines     String[]
+  allowedDegrees         String[]
+  allowedGraduationYears Int[]
+  minAcademicYear        Int?
+  maxActiveBacklogs      Int?
+  minExperienceMonths    Int?
+  requireVerifiedProfile Boolean          @default(true)
+  additionalRequirements String?
+  selectionCriteria      String?
+  publishedAt            DateTime?
+  createdAt              DateTime         @default(now())
+  updatedAt              DateTime         @updatedAt
+
+  organization Organization?            @relation(fields: [organizationId], references: [id])
+  postedBy     Institution?             @relation(fields: [postedByInstitutionId], references: [id])
+  requirements OpportunityRequirement[]
+  institutions OpportunityInstitution[]
+  applications Application[]
+  referrals    Referral[]
+  savedBy      SavedOpportunity[]
+
+  @@index([status, deadline])
+  @@index([type, status])
+  @@index([organizationId])
+}
+
+model OpportunityRequirement {
+  id             String  @id @default(cuid())
+  opportunityId  String
+  skillId        String
+  minProficiency Int     @default(1)
+  isMandatory    Boolean @default(true)
+  weight         Int     @default(1)
+
+  opportunity Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  skill       Skill       @relation(fields: [skillId], references: [id])
+
+  @@unique([opportunityId, skillId])
+}
+
+// Which institutions an opportunity is open to (must be partnered unless a college posted it).
+model OpportunityInstitution {
+  opportunityId String
+  institutionId String
+
+  opportunity Opportunity @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  institution Institution @relation(fields: [institutionId], references: [id], onDelete: Cascade)
+
+  @@id([opportunityId, institutionId])
+}
+
+model SavedOpportunity {
+  studentId     String
+  opportunityId String
+  createdAt     DateTime @default(now())
+
+  student     StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  opportunity Opportunity    @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+
+  @@id([studentId, opportunityId])
+}
+
+model Application {
+  id            String            @id @default(cuid())
+  opportunityId String
+  studentId     String
+  status        ApplicationStatus @default(SUBMITTED)
+  eligibility   EligibilityResult
+  // Full explanation (matched / missing criteria) frozen at the time of applying
+  eligibilitySnapshot Json
+  matchScore    Int?
+  coverNote     String?
+  appliedAt     DateTime          @default(now())
+  updatedAt     DateTime          @updatedAt
+
+  opportunity       Opportunity              @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  student           StudentProfile           @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  statusEvents      ApplicationStatusEvent[]
+  interviews        Interview[]
+  offer             Offer?
+  referral          Referral?
+  placementRequests PlacementRequest[]
+
+  // Duplicate applications are rejected by the database itself, not only by service code.
+  @@unique([opportunityId, studentId])
+  @@index([studentId, status])
+  @@index([opportunityId, status])
+}
+
+model ApplicationStatusEvent {
+  id            String             @id @default(cuid())
+  applicationId String
+  fromStatus    ApplicationStatus?
+  toStatus      ApplicationStatus
+  actorId       String
+  note          String?
+  createdAt     DateTime           @default(now())
+
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([applicationId])
+}
+
+model Interview {
+  id             String          @id @default(cuid())
+  applicationId  String
+  scheduledAt    DateTime
+  mode           WorkMode        @default(ONSITE)
+  locationOrLink String?
+  status         InterviewStatus @default(SCHEDULED)
+  notes          String?
+  createdById    String
+  createdAt      DateTime        @default(now())
+
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@index([applicationId])
+}
+
+model Offer {
+  id            String      @id @default(cuid())
+  applicationId String      @unique
+  status        OfferStatus @default(ISSUED)
+  details       String?
+  joiningDate   DateTime?
+  issuedAt      DateTime    @default(now())
+  respondedAt   DateTime?
+
+  application Application @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+}
+
+// ───────────────────────────── Referrals & consent ─────────────────────────────
+
+model Referral {
+  id               String            @id @default(cuid())
+  opportunityId    String
+  alumniId         String
+  studentId        String
+  status           ReferralStatus    @default(PENDING_STUDENT_CONSENT)
+  note             String?
+  eligibility      EligibilityResult
+  studentConsentAt DateTime?
+  applicationId    String?           @unique
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  opportunity Opportunity    @relation(fields: [opportunityId], references: [id], onDelete: Cascade)
+  alumni      AlumniProfile  @relation(fields: [alumniId], references: [id])
+  student     StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  application Application?   @relation(fields: [applicationId], references: [id])
+
+  // One referral per student per vacancy – a second alumnus gets a consistent "already referred" result.
+  @@unique([opportunityId, studentId])
+  @@index([alumniId, status])
+}
+
+model ConsentGrant {
+  id                    String       @id @default(cuid())
+  studentId             String
+  scope                 ConsentScope
+  granteeOrganizationId String?
+  opportunityId         String?
+  fields                String[] // which profile fields may be shared
+  grantedAt             DateTime     @default(now())
+  expiresAt             DateTime?
+  revokedAt             DateTime?
+
+  student StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([studentId, scope])
+}
+
+// ───────────────────────────── AI roadmap & learning library ─────────────────────────────
+
+model Roadmap {
+  id            String        @id @default(cuid())
+  studentId     String
+  targetRole    String
+  source        RoadmapSource
+  providerName  String? // null for the rule-based fallback
+  modelName     String?
+  status        RoadmapStatus @default(ACTIVE)
+  summary       String
+  disclaimer    String
+  // The exact inputs used (skills, year, hours ...) so the output can be explained and audited
+  inputSnapshot Json
+  skillGaps     Json // [{ skill, required, current, gap }]
+  createdAt     DateTime      @default(now())
+
+  student    StudentProfile     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  milestones RoadmapMilestone[]
+
+  @@index([studentId, status])
+}
+
+model RoadmapMilestone {
+  id          String          @id @default(cuid())
+  roadmapId   String
+  position    Int
+  level       MilestoneLevel
+  title       String
+  description String
+  targetWeek  Int?
+  skills      String[]
+  deliverable String? // project / assessment / portfolio item
+  status      MilestoneStatus @default(NOT_STARTED)
+  completedAt DateTime?
+
+  roadmap   Roadmap            @relation(fields: [roadmapId], references: [id], onDelete: Cascade)
+  resources LearningResource[]
+
+  @@unique([roadmapId, position])
+}
+
+model LearningResource {
+  id            String         @id @default(cuid())
+  title         String
+  description   String?
+  url           String
+  type          ResourceType
+  provider      String?
+  licenseNote   String? // e.g. "CC BY 4.0", "Free to read, publisher-hosted"
+  isExternal    Boolean        @default(true)
+  disciplines   String[]
+  academicYears Int[]
+  language      String         @default("en")
+  status        ResourceStatus @default(PENDING_REVIEW)
+  lastCheckedAt DateTime?
+  createdById   String?
+  createdAt     DateTime       @default(now())
+
+  skills     Skill[]
+  milestones RoadmapMilestone[]
+  progress   ResourceProgress[]
+
+  @@index([type, status])
+}
+
+model ResourceProgress {
+  studentId   String
+  resourceId  String
+  bookmarked  Boolean   @default(false)
+  completedAt DateTime?
+  updatedAt   DateTime  @updatedAt
+
+  student  StudentProfile   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  resource LearningResource @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+
+  @@id([studentId, resourceId])
+}
+
+// ───────────────────────────── Placement cell ─────────────────────────────
+
+model PlacementRequest {
+  id                String                 @id @default(cuid())
+  studentId         String
+  institutionId     String
+  applicationId     String?
+  type              PlacementRequestType
+  status            PlacementRequestStatus @default(OPEN)
+  details           String?
+  assignedOfficerId String?
+  checklist         Json                   @default("[]")
+  resolutionNote    String?
+  feedbackRating    Int?
+  feedbackText      String?
+  createdAt         DateTime               @default(now())
+  updatedAt         DateTime               @updatedAt
+
+  student      StudentProfile         @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  institution  Institution            @relation(fields: [institutionId], references: [id])
+  application  Application?           @relation(fields: [applicationId], references: [id])
+  messages     PlacementMessage[]
+  appointments PlacementAppointment[]
+
+  @@index([institutionId, status])
+  @@index([studentId])
+}
+
+model PlacementMessage {
+  id        String   @id @default(cuid())
+  requestId String
+  senderId  String
+  body      String
+  createdAt DateTime @default(now())
+
+  request PlacementRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+  sender  User             @relation(fields: [senderId], references: [id])
+
+  @@index([requestId, createdAt])
+}
+
+model PlacementAppointment {
+  id             String          @id @default(cuid())
+  requestId      String
+  scheduledAt    DateTime
+  mode           WorkMode        @default(ONSITE)
+  locationOrLink String?
+  status         InterviewStatus @default(SCHEDULED)
+
+  request PlacementRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+}
+
+// ───────────────────────────── Alumni sessions ─────────────────────────────
+
+model MentorshipSession {
+  id          String      @id @default(cuid())
+  alumniId    String
+  kind        SessionKind
+  title       String
+  description String
+  scheduledAt DateTime?
+  capacity    Int         @default(20)
+  isOpen      Boolean     @default(true)
+  createdAt   DateTime    @default(now())
+
+  alumni      AlumniProfile       @relation(fields: [alumniId], references: [id], onDelete: Cascade)
+  enrollments SessionEnrollment[]
+
+  @@index([alumniId])
+}
+
+model SessionEnrollment {
+  sessionId String
+  studentId String
+  createdAt DateTime @default(now())
+
+  session MentorshipSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  student StudentProfile    @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@id([sessionId, studentId])
+}
+
+// ───────────────────────────── Cross-cutting ─────────────────────────────
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  type      NotificationType
+  title     String
+  body      String
+  linkPath  String?
+  // Prevents duplicate alerts, e.g. "deadline:<opportunityId>:<userId>:3d"
+  dedupeKey String?          @unique
+  readAt    DateTime?
+  createdAt DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, readAt, createdAt])
+}
+
+model AuditEvent {
+  id            String        @id @default(cuid())
+  actorId       String?
+  action        String // e.g. "verification.approve", "auth.login_failed"
+  entityType    String?
+  entityId      String?
+  institutionId String?
+  severity      AuditSeverity @default(INFO)
+  metadata      Json          @default("{}")
+  ip            String?
+  createdAt     DateTime      @default(now())
+
+  @@index([actorId, createdAt])
+  @@index([institutionId, createdAt])
+  @@index([action, createdAt])
+  @@index([severity, createdAt])
+}
+
+model AiUsageLog {
+  id               String   @id @default(cuid())
+  userId           String
+  feature          String // "roadmap", "skill_explain" ...
+  provider         String
+  model            String?
+  promptTokens     Int?
+  completionTokens Int?
+  latencyMs        Int?
+  success          Boolean
+  errorCode        String?
+  usedFallback     Boolean  @default(false)
+  createdAt        DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([createdAt])
+}
+
+model PrivacyRequest {
+  id          String               @id @default(cuid())
+  userId      String
+  type        PrivacyRequestType
+  status      PrivacyRequestStatus @default(REQUESTED)
+  note        String?
+  requestedAt DateTime             @default(now())
+  completedAt DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model ContactMessage {
+  id        String   @id @default(cuid())
+  name      String
+  email     String
+  subject   String
+  message   String
+  handledAt DateTime?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+}

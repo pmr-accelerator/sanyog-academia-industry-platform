@@ -1,0 +1,51 @@
+# Local development:  docker compose up -d db        (PostgreSQL only; run the app with `npm run dev`)
+# Full stack:         docker compose --profile full up --build   (set real secrets in .env first)
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: sanyog
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-change_me_local_only}
+      POSTGRES_DB: sanyog
+    ports: ["127.0.0.1:5432:5432"]
+    volumes: ["pgdata:/var/lib/postgresql/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sanyog"]
+      interval: 5s
+      retries: 10
+
+  # Local demonstration profile only. Do not deploy this profile as production infrastructure.
+  api:
+    profiles: ["full"]
+    build: { context: ., dockerfile: server/Dockerfile }
+    depends_on: { db: { condition: service_healthy } }
+    env_file: .env
+    ports: ["127.0.0.1:4000:4000"]
+    environment:
+      DATABASE_URL: postgresql://sanyog:${DB_PASSWORD:-change_me_local_only}@db:5432/sanyog?schema=public
+      NODE_ENV: development
+      CLIENT_ORIGIN: http://localhost:8080
+      COOKIE_SECURE: "false"   # local-only HTTP demo; production must use HTTPS and true
+      DEMO_MODE: "true"
+      UPLOAD_DIR: /data/uploads
+      TRUST_PROXY: "true"
+    volumes: ["uploads:/data/uploads"]
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4000/api/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 20s
+
+  web:
+    profiles: ["full"]
+    build: { context: ., dockerfile: client/Dockerfile }
+    depends_on:
+      api:
+        condition: service_healthy
+    ports: ["8080:80"]
+
+volumes:
+  pgdata:
+  uploads:

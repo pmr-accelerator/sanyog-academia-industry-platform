@@ -1,0 +1,9 @@
+{
+  "nav.home": "Home", "nav.about": "About", "nav.how": "How it works", "nav.opportunities": "Opportunities", "nav.library": "Learning library",
+  "nav.students": "Students", "nav.institutions": "Institutions", "nav.industry": "Industry", "nav.alumni": "Alumni", "nav.more": "More",
+  "nav.login": "Sign in", "nav.register": "Register", "nav.logout": "Sign out", "nav.dashboard": "Dashboard", "nav.notifications": "Notifications",
+  "common.save": "Save", "common.cancel": "Cancel", "common.delete": "Delete", "common.edit": "Edit", "common.search": "Search", "common.loading": "Loading…",
+  "common.retry": "Try again", "common.none": "Nothing here yet.", "common.back": "Back", "common.submit": "Submit", "common.next": "Next", "common.prev": "Previous",
+  "footer.demo": "Some or all data on this site may be synthetic demonstration data.",
+  "a11y.mode": "Accessible reading mode", "skip": "Skip to main content"
+}

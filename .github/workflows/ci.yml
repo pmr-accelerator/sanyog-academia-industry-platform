@@ -1,0 +1,87 @@
+name: CI
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: sanyog
+          POSTGRES_PASSWORD: ci_test_password
+          POSTGRES_DB: sanyog
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sanyog -d sanyog"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      NODE_ENV: test
+      DATABASE_URL: postgresql://sanyog:ci_test_password@localhost:5432/sanyog?schema=public
+      DB_PASSWORD: ci_test_password
+      CLIENT_ORIGIN: http://localhost:5173
+      SESSION_SECRET: ci_session_secret_0123456789_0123456789
+      CREDENTIAL_SIGNING_KEY: ci_credential_signing_key_0123456789
+      COOKIE_SECURE: "false"
+      TRUST_PROXY: "false"
+      DEMO_MODE: "true"
+      SEED_DEMO_PASSWORD: ci-demo-password-12345
+      MAIL_TRANSPORT: console
+      AI_PROVIDER: none
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+      - name: Generate Prisma client
+        run: npx prisma generate --schema prisma/schema.prisma
+      - name: Validate Prisma schema
+        run: npx prisma validate --schema prisma/schema.prisma
+      - name: Generate initial migration from schema
+        run: npm run db:migration:baseline
+      - name: Apply migrations to clean PostgreSQL
+        run: npx prisma migrate deploy --schema prisma/schema.prisma
+      - name: Seed synthetic datasets
+        run: npm run db:seed
+      - name: Server unit tests
+        run: npm run test:unit --workspace server
+      - name: Database-backed API integration tests
+        run: npm run test:integration --workspace server
+      - name: Client tests
+        run: npm test --workspace client
+      - name: Frontend production build
+        run: npm run build
+      - name: Prepare local Docker environment
+        run: cp .env.example .env
+      - name: Build Docker images
+        run: docker compose --profile full build
+      - name: Start full stack
+        run: docker compose --profile full up -d
+      - name: Smoke-test API and frontend containers
+        run: |
+          for i in $(seq 1 30); do
+            if curl --fail --silent http://localhost:4000/api/healthz >/dev/null; then break; fi
+            sleep 2
+          done
+          curl --fail http://localhost:4000/api/healthz
+          curl --fail --silent http://localhost:8080/ | grep -qi '<html'
+      - name: Install Chromium for browser test
+        run: npx playwright install --with-deps chromium
+      - name: Browser end-to-end smoke test
+        env:
+          E2E_BASE_URL: http://127.0.0.1:8080
+        run: npm run test:e2e
+      - name: Collect container logs on failure
+        if: failure()
+        run: docker compose --profile full logs --no-color
+      - name: Stop stack
+        if: always()
+        run: docker compose --profile full down -v

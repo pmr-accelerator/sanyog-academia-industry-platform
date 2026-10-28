@@ -1,0 +1,46 @@
+{
+  "name": "sanyog-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20.11.0"
+  },
+  "prisma": {
+    "schema": "../prisma/schema.prisma"
+  },
+  "scripts": {
+    "dev": "node --watch src/server.js",
+    "start": "node src/server.js",
+    "prisma:generate": "prisma generate",
+    "prisma:migrate": "dotenv -e ../.env -- prisma migrate dev",
+    "prisma:deploy": "dotenv -e ../.env -- prisma migrate deploy",
+    "seed": "node src/scripts/seed.js",
+    "create-admin": "node src/scripts/createAdmin.js",
+    "jobs:run": "node src/jobs/index.js --once",
+    "test": "node tests/run.js all",
+    "test:unit": "node tests/run.js unit",
+    "test:integration": "node tests/run.js integration",
+    "postinstall": "prisma generate",
+    "prisma:validate": "dotenv -e ../.env -- prisma validate",
+    "prisma:studio": "dotenv -e ../.env -- prisma studio"
+  },
+  "dependencies": {
+    "@prisma/client": "6.2.1",
+    "bcryptjs": "2.4.3",
+    "cookie-parser": "1.4.7",
+    "cors": "2.8.5",
+    "dotenv": "16.4.7",
+    "express": "4.21.2",
+    "express-rate-limit": "7.5.0",
+    "helmet": "8.0.0",
+    "multer": "1.4.5-lts.1",
+    "nodemailer": "6.9.16",
+    "pdfkit": "0.16.0",
+    "prisma": "6.2.1",
+    "zod": "3.24.1"
+  },
+  "devDependencies": {
+    "dotenv-cli": "7.4.4"
+  }
+}
